@@ -13,4 +13,9 @@
 	tools:showIn="@layout/activity_search"
 	tools:context="com.weezlabs.rx_giphy.SearchActivity">
 
+	<pl.droidsonroids.gif.GifImageView
+		android:id="@+id/gif_view"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"/>
+
 </RelativeLayout>
