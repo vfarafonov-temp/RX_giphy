@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 
 import retrofit.GsonConverterFactory;
 import retrofit.Retrofit;
+import retrofit.RxJavaCallAdapterFactory;
 
 /**
  * Created by Admin on 17.10.2015.
@@ -26,6 +27,7 @@ public class RetrofitProvider {
 					retrofit_ = new Retrofit.Builder()
 							.baseUrl(WEB_BASE)
 							.addConverterFactory(GsonConverterFactory.create(gson))
+							.addCallAdapterFactory(RxJavaCallAdapterFactory.create())
 							.build();
 				}
 			}
