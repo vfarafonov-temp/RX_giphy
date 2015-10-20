@@ -1,7 +1,8 @@
-package com.weezlabs.rx_giphy;
+package com.weezlabs.rx_giphy.Network;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.weezlabs.rx_giphy.Gif;
 
 import retrofit.GsonConverterFactory;
 import retrofit.Retrofit;

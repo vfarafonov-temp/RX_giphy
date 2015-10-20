@@ -2,6 +2,8 @@ package com.weezlabs.rx_giphy;
 
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.SearchView;
 import android.support.v7.widget.Toolbar;
 import android.view.Menu;
@@ -14,9 +16,12 @@ import com.jakewharton.rxbinding.support.v7.widget.RxSearchView;
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.okhttp.Request;
 import com.squareup.okhttp.Response;
+import com.weezlabs.rx_giphy.Network.BaseResponse;
+import com.weezlabs.rx_giphy.Network.RetrofitProvider;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -24,7 +29,6 @@ import okio.BufferedSource;
 import pl.droidsonroids.gif.GifDrawable;
 import pl.droidsonroids.gif.GifImageView;
 import rx.Observable;
-import rx.Observer;
 import rx.Subscriber;
 import rx.android.schedulers.AndroidSchedulers;
 import rx.functions.Action1;
@@ -38,6 +42,9 @@ public class SearchActivity extends AppCompatActivity {
 	private GifImageView gifView_;
 	private CompositeSubscription subscription_;
 	private ProgressBar networkProgressBar_;
+	private List<Gif> gifsList_ = new ArrayList<>();
+	private GifsListAdapter gifsListAdapter_;
+	private Observable<String> gifClickObservable_;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -48,6 +55,37 @@ public class SearchActivity extends AppCompatActivity {
 		gifView_ = (GifImageView) findViewById(R.id.gif_view);
 		networkProgressBar_ = (ProgressBar) findViewById(R.id.pb_network);
 		subscription_ = new CompositeSubscription();
+
+		RecyclerView gifsList = (RecyclerView) findViewById(R.id.rv_search_results);
+		gifsList.setLayoutManager(new LinearLayoutManager(this));
+		gifsListAdapter_ = new GifsListAdapter(gifsList_);
+		gifsList.setAdapter(gifsListAdapter_);
+
+		// Get clicks observable
+		ConnectableObservable<Integer> clickObservable = gifsListAdapter_.getClickObservable().publish();
+		clickObservable.connect();
+
+		// Subscribe to handle clicks event
+		subscription_.add(clickObservable.subscribe(new Action1<Integer>() {
+			@Override
+			public void call(Integer integer) {
+				gifView_.setImageDrawable(null);
+				networkProgressBar_.setVisibility(View.VISIBLE);
+			}
+		}));
+
+		// Prepare observable which emits gif's url after click
+		gifClickObservable_ = clickObservable.flatMap(new Func1<Integer, Observable<String>>() {
+			@Override
+			public Observable<String> call(final Integer integer) {
+				return Observable.create(new Observable.OnSubscribe<String>() {
+					@Override
+					public void call(Subscriber<? super String> subscriber) {
+						subscriber.onNext(gifsList_.get(integer).getUrl());
+					}
+				});
+			}
+		});
 	}
 
 	@Override
@@ -57,7 +95,12 @@ public class SearchActivity extends AppCompatActivity {
 
 		MenuItem searchItem = menu.findItem(R.id.action_search);
 		SearchView searchView = (SearchView) searchItem.getActionView();
+		createSearchSubscriptions(searchView);
 
+		return true;
+	}
+
+	private void createSearchSubscriptions(SearchView searchView) {
 		// Creating observable from SearchView
 		Observable<CharSequence> searchObservable = RxSearchView.queryTextChanges(searchView)
 				.filter(new Func1<CharSequence, Boolean>() {
@@ -75,23 +118,15 @@ public class SearchActivity extends AppCompatActivity {
 		connectableSearchObservable.connect();
 
 		// Subscribing to searchObservable to handle search process start
-		subscription_.add(connectableSearchObservable.observeOn(AndroidSchedulers.mainThread()).subscribe(new Observer<CharSequence>() {
+		subscription_.add(connectableSearchObservable.observeOn(AndroidSchedulers.mainThread()).subscribe(new Action1<CharSequence>() {
 			@Override
-			public void onCompleted() {
-			}
-
-			@Override
-			public void onError(Throwable e) {
-			}
-
-			@Override
-			public void onNext(CharSequence charSequence) {
+			public void call(CharSequence charSequence) {
 				networkProgressBar_.setVisibility(View.VISIBLE);
 			}
 		}));
 
-		// Creating observable to return GifDrawable from search query
-		Observable<GifDrawable> gifObservable = connectableSearchObservable
+		// Create observable for getting list of gifs
+		Observable<BaseResponse<List<Gif>>> gifsResponseObservable = connectableSearchObservable
 				.flatMap(new Func1<CharSequence, Observable<BaseResponse<List<Gif>>>>() {
 					// Downloading gif list
 					@Override
@@ -100,82 +135,103 @@ public class SearchActivity extends AppCompatActivity {
 								.subscribeOn(Schedulers.io())
 								.observeOn(AndroidSchedulers.mainThread());
 					}
-				})
-				.flatMap(new Func1<BaseResponse<List<Gif>>, Observable<GifDrawable>>() {
-					// Downloading gif
-					@Override
-					public Observable<GifDrawable> call(final BaseResponse<List<Gif>> listBaseResponse) {
-						return Observable.create(new Observable.OnSubscribe<GifDrawable>() {
+				});
+
+		// Subscribing to gifs list observable to update RecyclerView
+		subscription_.add(gifsResponseObservable.subscribe(new Action1<BaseResponse<List<Gif>>>() {
+			@Override
+			public void call(BaseResponse<List<Gif>> listBaseResponse) {
+				gifsList_.clear();
+				gifsList_.addAll(listBaseResponse.getData());
+				gifsListAdapter_.notifyDataSetChanged();
+			}
+		}));
+
+		// Creating observable to return GifDrawable from search query
+		Observable<GifDrawable> gifObservable =
+				gifsResponseObservable
+						.flatMap(new Func1<BaseResponse<List<Gif>>, Observable<String>>() {
+							// Get url
 							@Override
-							public void call(Subscriber<? super GifDrawable> subscriber) {
-								if (listBaseResponse.getData().size() == 0) {
-									// Gif not found
-									subscriber.onError(new IOException("Nothing found"));
-									return;
-								}
-								try {
-									// Downloading gif
-									OkHttpClient okHttpClient = new OkHttpClient();
-									okHttpClient.setConnectTimeout(10000, TimeUnit.MILLISECONDS);
-									Response response = okHttpClient.newCall(new Request.Builder().url(listBaseResponse.getData().get(0).getUrl()).build()).execute();
-									if (!response.isSuccessful()) {
-										subscriber.onError(new IOException("Request failed: " + response.code()));
-										return;
+							public Observable<String> call(final BaseResponse<List<Gif>> listBaseResponse) {
+								// Get first item url
+								return Observable.create(new Observable.OnSubscribe<String>() {
+									@Override
+									public void call(Subscriber<? super String> subscriber) {
+										if (listBaseResponse.getData().size() == 0) {
+											// Gif not found
+											subscriber.onNext(null);
+										} else {
+											subscriber.onNext(listBaseResponse.getData().get(0).getUrl());
+										}
 									}
-									BufferedSource source = response.body().source();
-									GifDrawable gifDrawable = new GifDrawable(source.readByteArray());
-									subscriber.onNext(gifDrawable);
-									subscriber.onCompleted();
-								} catch (IOException e) {
-									e.printStackTrace();
-									subscriber.onError(new IOException(
-											// SocketTimeoutException does not have message so need to add it manually
-											"Fail requesting: " + (e instanceof SocketTimeoutException ? "check your connection" : e.getMessage())
-									));
-								}
+								});
 							}
 						})
-								.lift(new OperatorSupressError<GifDrawable>(new Action1<Throwable>() {
+								// Merging with observable from clicking on list
+						.mergeWith(gifClickObservable_)
+						.flatMap(new Func1<String, Observable<GifDrawable>>() {
+							// Gets GifDrawable from url
+							@Override
+							public Observable<GifDrawable> call(final String url) {
+								return Observable.create(new Observable.OnSubscribe<GifDrawable>() {
 									@Override
-									public void call(final Throwable throwable) {
-										// Displaying error toast. Actually can handle different errors differently
-										runOnUiThread(new Runnable() {
-											@Override
-											public void run() {
-												gifView_.setImageDrawable(null);
-												networkProgressBar_.setVisibility(View.GONE);
-												Toast.makeText(getBaseContext(), "Error getting gif: " + throwable.getMessage(), Toast.LENGTH_LONG).show();
+									public void call(Subscriber<? super GifDrawable> subscriber) {
+										if (url == null) {
+											subscriber.onError(new IOException("Nothing found"));
+											return;
+										}
+										try {
+											// Downloading gif
+											OkHttpClient okHttpClient = new OkHttpClient();
+											okHttpClient.setConnectTimeout(10000, TimeUnit.MILLISECONDS);
+											Response response = okHttpClient.newCall(new Request.Builder().url(url).build()).execute();
+											if (!response.isSuccessful()) {
+												subscriber.onError(new IOException("Request failed: " + response.code()));
+												return;
 											}
-										});
+											BufferedSource source = response.body().source();
+											GifDrawable gifDrawable = new GifDrawable(source.readByteArray());
+											subscriber.onNext(gifDrawable);
+											subscriber.onCompleted();
+										} catch (IOException e) {
+											e.printStackTrace();
+											subscriber.onError(new IOException(
+													// SocketTimeoutException does not have message so need to add it manually
+													"Fail requesting: " + (e instanceof SocketTimeoutException ? "check your connection" : e.getMessage())
+											));
+										}
 									}
-								}))
-								.subscribeOn(Schedulers.io());
-					}
-				})
-				.subscribeOn(AndroidSchedulers.mainThread())
-				.observeOn(AndroidSchedulers.mainThread());
-
+								})
+										.lift(new OperatorSupressError<GifDrawable>(new Action1<Throwable>() {
+											@Override
+											public void call(final Throwable throwable) {
+												// Displaying error toast. Actually can handle different errors differently
+												runOnUiThread(new Runnable() {
+													@Override
+													public void run() {
+														gifView_.setImageDrawable(null);
+														networkProgressBar_.setVisibility(View.GONE);
+														Toast.makeText(getBaseContext(), "Error getting gif: " + throwable.getMessage(), Toast.LENGTH_LONG).show();
+													}
+												});
+											}
+										}))
+										.subscribeOn(Schedulers.io());
+							}
+						})
+						.subscribeOn(AndroidSchedulers.mainThread())
+						.observeOn(AndroidSchedulers.mainThread());
 
 		// Subscribe to gifObservable
-		subscription_.add(gifObservable.subscribe(new Observer<GifDrawable>() {
+		subscription_.add(gifObservable.subscribe(new Action1<GifDrawable>() {
 			@Override
-			public void onCompleted() {
-				networkProgressBar_.setVisibility(View.GONE);
-			}
-
-			@Override
-			public void onError(Throwable e) {
-				// Request error already handled earlier with .lift operator
-			}
-
-			@Override
-			public void onNext(GifDrawable gifDrawable) {
+			public void call(GifDrawable gifDrawable) {
 				networkProgressBar_.setVisibility(View.GONE);
 				gifView_.setImageDrawable(gifDrawable);
 				gifDrawable.start();
 			}
 		}));
-		return true;
 	}
 
 	@Override

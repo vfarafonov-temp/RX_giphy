@@ -1,4 +1,6 @@
-package com.weezlabs.rx_giphy;
+package com.weezlabs.rx_giphy.Network;
+
+import com.weezlabs.rx_giphy.Gif;
 
 import java.util.List;
 

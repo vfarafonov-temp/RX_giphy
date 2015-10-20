@@ -1,4 +1,4 @@
-package com.weezlabs.rx_giphy;
+package com.weezlabs.rx_giphy.Network;
 
 import com.google.gson.annotations.SerializedName;
 
