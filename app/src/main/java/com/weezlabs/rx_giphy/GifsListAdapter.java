@@ -34,7 +34,7 @@ public class GifsListAdapter extends RecyclerView.Adapter<GifsListAdapter.GifsVi
 
 	@Override
 	public void onBindViewHolder(GifsListAdapter.GifsViewHolder holder, int position) {
-		holder.nameTextView.setText(gifsList_.get(position).getId());
+		holder.nameTextView.setText((position + 1) + ". " + gifsList_.get(position).getId());
 	}
 
 	@Override
