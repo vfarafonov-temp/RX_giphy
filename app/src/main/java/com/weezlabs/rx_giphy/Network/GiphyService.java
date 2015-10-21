@@ -18,5 +18,5 @@ public interface GiphyService {
 	Call<BaseResponse<List<Gif>>> findGiphs(@Query("q") String searchQuery);
 
 	@GET("gifs/search" + RetrofitProvider.API_KEY_QUERY)
-	Observable<BaseResponse<List<Gif>>> findGifsRx(@Query("q") String searchQuery);
+	Observable<BaseResponse<List<Gif>>> findGifsRx(@Query("q") String searchQuery, @Query("offset") int offset);
 }

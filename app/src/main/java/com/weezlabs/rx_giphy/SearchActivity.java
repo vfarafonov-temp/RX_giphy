@@ -12,6 +12,8 @@ import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import com.jakewharton.rxbinding.support.v7.widget.RecyclerViewScrollStateChangeEvent;
+import com.jakewharton.rxbinding.support.v7.widget.RxRecyclerView;
 import com.jakewharton.rxbinding.support.v7.widget.RxSearchView;
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.okhttp.Request;
@@ -39,12 +41,18 @@ import rx.subscriptions.CompositeSubscription;
 
 public class SearchActivity extends AppCompatActivity {
 
+	public static final int MIN_SEARCH_LENGTH = 2;
+	private static final int CODE_NO_MORE_ITEMS_TO_GET = -1;
 	private GifImageView gifView_;
 	private CompositeSubscription subscription_;
 	private ProgressBar networkProgressBar_;
 	private List<Gif> gifsList_ = new ArrayList<>();
 	private GifsListAdapter gifsListAdapter_;
 	private Observable<String> gifClickObservable_;
+	private int offset_ = 0;
+	private SearchView searchView_;
+	private Observable<CharSequence> scrollObservable_;
+	private RecyclerView gifsRecyclerView_;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -56,10 +64,10 @@ public class SearchActivity extends AppCompatActivity {
 		networkProgressBar_ = (ProgressBar) findViewById(R.id.pb_network);
 		subscription_ = new CompositeSubscription();
 
-		RecyclerView gifsList = (RecyclerView) findViewById(R.id.rv_search_results);
-		gifsList.setLayoutManager(new LinearLayoutManager(this));
+		gifsRecyclerView_ = (RecyclerView) findViewById(R.id.rv_search_results);
+		gifsRecyclerView_.setLayoutManager(new LinearLayoutManager(this));
 		gifsListAdapter_ = new GifsListAdapter(gifsList_);
-		gifsList.setAdapter(gifsListAdapter_);
+		gifsRecyclerView_.setAdapter(gifsListAdapter_);
 
 		// Get clicks observable
 		ConnectableObservable<Integer> clickObservable = gifsListAdapter_.getClickObservable().publish();
@@ -86,6 +94,25 @@ public class SearchActivity extends AppCompatActivity {
 				});
 			}
 		});
+
+		// Create observable on for scroll in RecyclerView
+		scrollObservable_ = RxRecyclerView.scrollStateChangeEvents(gifsRecyclerView_).flatMap(new Func1<RecyclerViewScrollStateChangeEvent, Observable<CharSequence>>() {
+			@Override
+			public Observable<CharSequence> call(final RecyclerViewScrollStateChangeEvent recyclerViewScrollStateChangeEvent) {
+				return Observable.create(new Observable.OnSubscribe<CharSequence>() {
+					@Override
+					public void call(Subscriber<? super CharSequence> subscriber) {
+						if (recyclerViewScrollStateChangeEvent.newState() == RecyclerView.SCROLL_STATE_IDLE
+								&& (((LinearLayoutManager) gifsRecyclerView_.getLayoutManager()).findLastCompletelyVisibleItemPosition() == (gifsListAdapter_.getItemCount() - 1))
+								&& offset_ != CODE_NO_MORE_ITEMS_TO_GET
+								&& searchView_ != null && searchView_.getQuery().length() > MIN_SEARCH_LENGTH) {
+							// Emit search query if scrolled to the end and have more items
+							subscriber.onNext(searchView_.getQuery());
+						}
+					}
+				});
+			}
+		});
 	}
 
 	@Override
@@ -94,31 +121,39 @@ public class SearchActivity extends AppCompatActivity {
 		getMenuInflater().inflate(R.menu.menu_search_activity, menu);
 
 		MenuItem searchItem = menu.findItem(R.id.action_search);
-		SearchView searchView = (SearchView) searchItem.getActionView();
-		createSearchSubscriptions(searchView);
+		searchView_ = (SearchView) searchItem.getActionView();
+		createSearchSubscriptions(searchView_);
 
 		return true;
 	}
 
 	private void createSearchSubscriptions(SearchView searchView) {
-		// Creating observable from SearchView
-		Observable<CharSequence> searchObservable = RxSearchView.queryTextChanges(searchView)
+		// Creating observable from SearchView text changes. Using ConnectableObservable so multiple subscribers can subscribe. (Making observable hot)
+		ConnectableObservable<CharSequence> charSequenceObservable = RxSearchView.queryTextChanges(searchView).publish();
+		charSequenceObservable.connect();
+
+		// Subscribing to text changes in SearchView
+		subscription_.add(charSequenceObservable.subscribe(new Action1<CharSequence>() {
+			@Override
+			public void call(CharSequence charSequence) {
+				offset_ = 0;
+			}
+		}));
+
+		// Creating observable for matching search query
+		Observable<CharSequence> searchObservable = charSequenceObservable
 				.filter(new Func1<CharSequence, Boolean>() {
 					// Excepting only sequence with length more than 2
 					@Override
 					public Boolean call(CharSequence charSequence) {
-						return charSequence.length() > 2;
+						return charSequence.length() > MIN_SEARCH_LENGTH;
 					}
 				})
 						// Waiting for 500 ms in case if typing not finished
 				.debounce(500, TimeUnit.MILLISECONDS);
 
-		// Creating connectable observable so multiple subscribers can subscribe. (Making observable hot)
-		ConnectableObservable<CharSequence> connectableSearchObservable = searchObservable.publish();
-		connectableSearchObservable.connect();
-
 		// Subscribing to searchObservable to handle search process start
-		subscription_.add(connectableSearchObservable.observeOn(AndroidSchedulers.mainThread()).subscribe(new Action1<CharSequence>() {
+		subscription_.add(searchObservable.observeOn(AndroidSchedulers.mainThread()).subscribe(new Action1<CharSequence>() {
 			@Override
 			public void call(CharSequence charSequence) {
 				networkProgressBar_.setVisibility(View.VISIBLE);
@@ -126,12 +161,14 @@ public class SearchActivity extends AppCompatActivity {
 		}));
 
 		// Create observable for getting list of gifs
-		Observable<BaseResponse<List<Gif>>> gifsResponseObservable = connectableSearchObservable
+		Observable<BaseResponse<List<Gif>>> gifsResponseObservable = searchObservable
+				// Merging with RecyclerView scroll observable
+				.mergeWith(scrollObservable_)
 				.flatMap(new Func1<CharSequence, Observable<BaseResponse<List<Gif>>>>() {
 					// Downloading gif list
 					@Override
 					public Observable<BaseResponse<List<Gif>>> call(CharSequence charSequence) {
-						return RetrofitProvider.getGiphyService().findGifsRx(charSequence.toString())
+						return RetrofitProvider.getGiphyService().findGifsRx(charSequence.toString(), offset_)
 								.subscribeOn(Schedulers.io())
 								.observeOn(AndroidSchedulers.mainThread());
 					}
@@ -141,9 +178,21 @@ public class SearchActivity extends AppCompatActivity {
 		subscription_.add(gifsResponseObservable.subscribe(new Action1<BaseResponse<List<Gif>>>() {
 			@Override
 			public void call(BaseResponse<List<Gif>> listBaseResponse) {
-				gifsList_.clear();
+				BaseResponse.PaginationInfo paginationInfo = listBaseResponse.getPaginationInfo();
+				offset_ = paginationInfo.getOffset() + paginationInfo.getCount();
+				if (offset_ >= paginationInfo.getTotalCount()) {
+					offset_ = CODE_NO_MORE_ITEMS_TO_GET;
+				}
+				if (paginationInfo.getOffset() == 0) {
+					gifsList_.clear();
+				}
+				int lastIndex = gifsList_.size() - 1;
 				gifsList_.addAll(listBaseResponse.getData());
-				gifsListAdapter_.notifyDataSetChanged();
+				if (lastIndex >= 0) {
+					gifsListAdapter_.notifyItemRangeInserted(lastIndex + 1, listBaseResponse.getData().size());
+				} else {
+					gifsListAdapter_.notifyDataSetChanged();
+				}
 			}
 		}));
 
