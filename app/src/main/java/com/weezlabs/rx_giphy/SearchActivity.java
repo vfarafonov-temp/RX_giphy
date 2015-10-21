@@ -136,6 +136,7 @@ public class SearchActivity extends AppCompatActivity {
 		subscription_.add(charSequenceObservable.subscribe(new Action1<CharSequence>() {
 			@Override
 			public void call(CharSequence charSequence) {
+				gifView_.setImageDrawable(null);
 				offset_ = 0;
 			}
 		}));
@@ -190,8 +191,15 @@ public class SearchActivity extends AppCompatActivity {
 				gifsList_.addAll(listBaseResponse.getData());
 				if (lastIndex >= 0) {
 					gifsListAdapter_.notifyItemRangeInserted(lastIndex + 1, listBaseResponse.getData().size());
+					if (((LinearLayoutManager)gifsRecyclerView_.getLayoutManager()).findLastCompletelyVisibleItemPosition() == lastIndex
+							&& listBaseResponse.getData().size() > 0){
+						gifsRecyclerView_.scrollToPosition(lastIndex +1);
+					}
 				} else {
 					gifsListAdapter_.notifyDataSetChanged();
+					if (listBaseResponse.getData().size() > 0) {
+						gifsRecyclerView_.scrollToPosition(0);
+					}
 				}
 			}
 		}));
