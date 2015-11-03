@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+	xmlns:android="http://schemas.android.com/apk/res/android"
+	xmlns:tools="http://schemas.android.com/tools"
+	xmlns:app="http://schemas.android.com/apk/res-auto"
+	xmlns:bind="http://robobinding.org/android"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:paddingLeft="@dimen/activity_horizontal_margin"
+	android:paddingRight="@dimen/activity_horizontal_margin"
+	android:paddingTop="@dimen/activity_vertical_margin"
+	android:paddingBottom="@dimen/activity_vertical_margin"
+	android:orientation="vertical"
+	app:layout_behavior="@string/appbar_scrolling_view_behavior"
+	tools:showIn="@layout/activity_search"
+	tools:context="com.weezlabs.rx_giphy.SearchActivity">
+
+	<FrameLayout
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1">
+
+		<ProgressBar
+			android:id="@+id/pb_network"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:visibility="gone"
+			bind:visibility="{progressBarVisibility}"/>
+
+		<pl.droidsonroids.gif.GifImageView
+			android:id="@+id/gif_view"
+			android:layout_width="match_parent"
+			android:layout_height="match_parent"
+			bind:source="{gifToPlay}"/>
+	</FrameLayout>
+
+	<android.support.v7.widget.RecyclerView
+		android:id="@+id/rv_search_results"
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1"
+		android:gravity="center"
+		bind:itemLayout="[@layout/gifs_list_item, @layout/gifs_list_item_2]"
+		bind:source="{gifs}"/>
+
+</LinearLayout>
